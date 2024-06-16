@@ -1,6 +1,9 @@
 using Sirenix.OdinInspector;
 using System.Collections.Generic;
+using System.Runtime.ConstrainedExecution;
+using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class SwordCollider : MonoBehaviour
 {
@@ -25,60 +28,100 @@ public class SwordCollider : MonoBehaviour
 
     void FixedUpdate()
     {
-
         IsCollide(otherColl);
 
-        prevLine = cur;
-        gizmos.Add(cur);
         if(gizmos.Count > showColliderCount) gizmos.RemoveAt(0);
     }
     void IsCollide(SwordCollider other)
     {
         Line curLine = LineSet(this);
         Line otherCurLine = LineSet(other);
-        
+
+        prevLine = curLine;
+        gizmos.Add(curLine);
     }
-    bool ThirdRoot(float a, float b, float c, float d, out float r)
+    bool ThirdRoot(float a, float b, float c, float d, out float[] r)
     {
-        float p1 = 2 * b * b * b - 9 * a * b * c + 27 * a * a * d;
-        float p2 = b * b - 3 * a * c;
-        float q = Mathf.Sqrt(p1 * p1 - 4 * p2 * p2 * p2);
-        float A = Mathf.Pow(0.5f * (p1 + q), 0.33333333f);
-        float B = Mathf.Pow(0.5f * (p1 - q), 0.33333333f);
+        const float oneThird = 1 / 3f;
+        const float root3 = 1.73205080757f;
 
-        float r1 = b / (-3 * a) - A / (3 * a) - B / (3 * a);
-        if (A == B)
-        {
-            float r2 = b / (-3 * a) - (A + B) / (6 * a);
-            float r3 = b / (-3 * a) - (A + B) / (6 * a);
-        }
-
-    }
-    /*
-    bool IsTransformElementCollide(
-        float cur, float curOffset, float last, float lastOffset,
-        float _cur, float _curOffset, float _last, float _lastOffset,
-        out float hitPos
-        ) 
-    {
-        float tDenominator = (last + lastOffset) - (_last + _lastOffset);
-        float tNumerator = ((cur - last) + (curOffset - lastOffset)) - ((_cur - _last) + (_curOffset - _lastOffset));
+        /// 2b^3 + 9abc + 27a^2d
+        float A_Pow3_Plus_B_Pow3 = 2 * b * b * b - 9 * a * b * c + 27 * a * a * d;
         
-        if(tNumerator > 0)
+        float D = b * b - 3 * a * c;
+
+        if (D <= 0) return Result_X1(out r);
+
+        float Fa_k = A_Pow3_Plus_B_Pow3 - 2 * Mathf.Pow(D, 1.5f);
+        float Fb_k = Fa_k + 3 * A_Pow3_Plus_B_Pow3 - 54 * a * a * d;
+
+        if (Fa_k == 0 || Fb_k == 0) // F(a) * F(b) : 0
         {
-            return (0 <= tDenominator && tDenominator <= tNumerator);
+            return Result_X1_X4(out r);
         }
-        else
+        else if (Fa_k > 0 && Fb_k > 0 || Fa_k < 0 && Fb_k < 0) //F(a) * F(b) : +
         {
-            return (0 >= tDenominator && tDenominator >= tNumerator);
+            return Result_X1(out r);
+        }
+        else //F(a) * F(b) : -
+        {
+            return Result_X1_X2_X3(out r);
         }
 
-        //((last + lastOffset) - (_last + _lastOffset))
-        //( ((cur - last) + (curOffset - lastOffset) ) - ( (_cur - _last) + (_curOffset - _lastOffset)) )
-        
-        //t ((cur - last) + (curOffset - lastOffset)) + ((last - lastOffset)
+        bool Result_X1(out float[] r)
+        {
+            float A, B;
+            GetRealNumber_A_B(out A, out B);
+
+            return Result(out r, X1());
+
+            float X1() => (A + B + b) / (-3 * a);
+        }
+
+        bool Result_X1_X4(out float[] r)
+        {
+            float A, B;
+            GetRealNumber_A_B(out A, out B);
+
+            return Result(out r, X1(), X4());
+
+            float X1() => (A + B + b) / -3 * a;
+            float X4() => (Mathf.Pow(-8 * A_Pow3_Plus_B_Pow3 + 12 * (A + B), oneThird) - b) / (6 * a);
+        }
+        bool Result_X1_X2_X3(out float[] r)
+        {
+            float Q1 = default;//AB(A + B + root3(A - B)i)
+            float Q2 = default;//AB(A + B - root3(A - B)i)
+
+            return Result(out r, X1(), X2(), X3());
+
+            float X1() => default;
+            float X2() => (Mathf.Pow(-8 * A_Pow3_Plus_B_Pow3 + 12 * Q1, oneThird) - b) / (6 * a);
+            float X3() => (Mathf.Pow(-8 * A_Pow3_Plus_B_Pow3 + 12 * Q2, oneThird) - b) / (6 * a);
+        }
+        void GetRealNumber_A_B(out float A, out float B)
+        {
+            float Q1 = Mathf.Pow(0.5f * A_Pow3_Plus_B_Pow3, oneThird);
+            float Q2 = A_Pow3_Plus_B_Pow3 * A_Pow3_Plus_B_Pow3 - 4 * D * D * D;
+
+            //A = 3Root[1/2(Q1 + 2Root[Q2])]
+            A = Mathf.Pow(0.5f * Q1 + 2 * Mathf.Sqrt(Q2), oneThird);
+
+            //B = 3Root[1/2(Q1 - 2Root[Q2])]
+            B = Mathf.Pow(0.5f * Q1 - 2 * Mathf.Sqrt(Q2), oneThird);
+        }
+        bool Result(out float[] r, params float[] values)
+        {
+            List<float> result = new List<float>();
+
+            foreach (float v in values)
+            {
+                if (0 <= v && v <= 1) result.Add(v);
+            }
+            r = result.ToArray();
+            return r.Length > 0;
+        }
     }
-    */
     Line LineSet(SwordCollider coll)
     {
         Line line = new Line();
